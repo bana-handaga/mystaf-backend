@@ -1,16 +1,15 @@
 """
-WSGI config for backend project.
-
-It exposes the WSGI callable as a module-level variable named ``application``.
-
-For more information on this file, see
-https://docs.djangoproject.com/en/6.0/howto/deployment/wsgi/
+WSGI config for MyStaf backend.
+Compatible with cPanel Python App (JagoanHosting).
 """
 
 import os
+import sys
 
-from django.core.wsgi import get_wsgi_application
+# Tambahkan root project ke sys.path agar Django bisa menemukan module
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 
+from django.core.wsgi import get_wsgi_application
 application = get_wsgi_application()
