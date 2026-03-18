@@ -148,6 +148,7 @@ REST_FRAMEWORK = {
 
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = [
+    'https://dev.dsti-ums.id',
     'https://dsti-ums.id',
     'https://www.dsti-ums.id',
     'http://localhost:4200',
