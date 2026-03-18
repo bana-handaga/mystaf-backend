@@ -196,6 +196,103 @@ class SyncProjectCommitsView(APIView):
 
 from .models import IssueComment
 
+COMMIT_CATEGORIES = {
+    'fix':      ['fix', 'bug', 'error', 'resolve', 'patch', 'hotfix', 'repair', 'revert'],
+    'feature':  ['add', 'feat', 'feature', 'implement', 'new', 'create', 'build', 'init'],
+    'refactor': ['refactor', 'clean', 'improve', 'optimize', 'restructure', 'enhance', 'update', 'upgrade'],
+    'docs':     ['doc', 'readme', 'comment', 'docs', 'documentation', 'changelog'],
+    'config':   ['config', 'setup', 'env', 'setting', 'deploy', 'ci', 'cd', 'workflow', 'docker'],
+    'test':     ['test', 'spec', 'unit', 'integration', 'testing', 'coverage'],
+    'remove':   ['remove', 'delete', 'drop', 'cleanup', 'clean up', 'deprecated'],
+    'merge':    ['merge', 'pull request', 'rebase', 'sync'],
+}
+
+def classify_commit(message):
+    msg = (message or '').lower()
+    for cat, keywords in COMMIT_CATEGORIES.items():
+        for kw in keywords:
+            if kw in msg:
+                return cat
+    return 'other'
+
+
+class CommitAnalysisView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        days = int(request.query_params.get('days', 30))
+        staf_id = request.query_params.get('staf_id', '')
+        project_id = request.query_params.get('project_id', '')
+        since = timezone.now() - timedelta(days=days)
+
+        qs = ProjectCommit.objects.filter(
+            committed_at__gte=since
+        ).select_related('project', 'staf').order_by('gitlab_username', 'project')
+
+        if staf_id:
+            qs = qs.filter(staf_id=staf_id)
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+
+        all_cats = list(COMMIT_CATEGORIES.keys()) + ['other']
+        category_totals = {c: 0 for c in all_cats}
+        staf_project_map = {}
+
+        for commit in qs:
+            cat = classify_commit(commit.message)
+            category_totals[cat] += 1
+            key = f"{commit.gitlab_username}__{commit.project_id}"
+            if key not in staf_project_map:
+                staf_project_map[key] = {
+                    'staf_name': commit.author_name,
+                    'staf_username': commit.gitlab_username,
+                    'staf_id': commit.staf.id if commit.staf else None,
+                    'project_name': commit.project.name,
+                    'project_id': commit.project.id,
+                    'total': 0,
+                    'categories': {c: 0 for c in all_cats},
+                    'dominant': '',
+                }
+            staf_project_map[key]['total'] += 1
+            staf_project_map[key]['categories'][cat] += 1
+
+        # Determine dominant category per staf-project
+        for v in staf_project_map.values():
+            v['dominant'] = max(v['categories'], key=lambda c: v['categories'][c])
+
+        results = sorted(staf_project_map.values(), key=lambda x: x['total'], reverse=True)
+
+        # Per-staf summary (across all projects)
+        staf_summary = {}
+        for v in results:
+            u = v['staf_username']
+            if u not in staf_summary:
+                staf_summary[u] = {
+                    'staf_name': v['staf_name'],
+                    'staf_username': u,
+                    'staf_id': v['staf_id'],
+                    'total': 0,
+                    'categories': {c: 0 for c in all_cats},
+                    'projects': 0,
+                }
+            staf_summary[u]['total'] += v['total']
+            staf_summary[u]['projects'] += 1
+            for c in all_cats:
+                staf_summary[u]['categories'][c] += v['categories'][c]
+
+        staf_list = sorted(staf_summary.values(), key=lambda x: x['total'], reverse=True)
+
+        return Response({
+            'total_commits': sum(category_totals.values()),
+            'category_totals': category_totals,
+            'by_staf': staf_list,
+            'by_staf_project': results,
+        })
+
+
 class CommitMessageListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
