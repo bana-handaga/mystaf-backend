@@ -27,7 +27,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-$%of2*8e^gwjto6^%e)xk+o-=h
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['api.dsti-ums.id', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -147,6 +147,10 @@ REST_FRAMEWORK = {
 }
 
 # CORS Configuration
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWED_ORIGINS = [
+    'https://dsti-ums.id',
+    'https://www.dsti-ums.id',
+    'http://localhost:4200',
+]
 
 CORS_ALLOW_CREDENTIALS = True
