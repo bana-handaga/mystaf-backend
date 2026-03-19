@@ -398,6 +398,19 @@ class IssueCommentListView(APIView):
         return Response({'count': len(results), 'results': results})
 
 
+class ManagementReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .report_service import build_team_report
+        days = int(request.query_params.get('days', 30))
+        try:
+            report = build_team_report(days)
+            return Response(report)
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
+
+
 class IssueCommentStatsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
