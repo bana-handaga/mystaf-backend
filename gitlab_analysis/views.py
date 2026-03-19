@@ -107,7 +107,7 @@ class ProjectListView(generics.ListAPIView):
         qs = GitLabProject.objects.annotate(
             commit_count=Count('commits', filter=Q(commits__committed_at__gte=since)),
             contributor_count=Count('commits__gitlab_username', filter=Q(commits__committed_at__gte=since), distinct=True),
-        ).filter(commit_count__gt=0)
+        ).filter(last_activity_at__gte=since)
 
         if search:
             qs = qs.filter(
@@ -116,7 +116,7 @@ class ProjectListView(generics.ListAPIView):
                 Q(namespace__icontains=search)
             )
 
-        qs = qs.order_by('-commit_count')
+        qs = qs.order_by('-commit_count', '-last_activity_at')
 
         results = [{
             'id': p.id,
@@ -163,10 +163,31 @@ class SyncProjectsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+        days = int(request.data.get('days', 30))
         service = GitLabService()
         try:
             count = service.sync_projects()
-            return Response({'message': f'{count} proyek disinkronkan.'})
+            # Auto-sync commits for projects with recent activity but no commits in DB
+            since = timezone.now() - timedelta(days=days)
+            from .models import GitLabProject
+            from django.db.models import Count
+            new_projects = GitLabProject.objects.annotate(
+                commit_count=Count('commits')
+            ).filter(commit_count=0, last_activity_at__gte=since)
+            commit_results = []
+            for proj in new_projects:
+                try:
+                    new_commits = service.sync_project_commits(proj, days)
+                    if new_commits > 0:
+                        commit_results.append(f'{proj.name}: {new_commits} commits')
+                except Exception:
+                    pass
+            msg = f'{count} proyek disinkronkan.'
+            if commit_results:
+                msg += f' Auto-sync commits: {", ".join(commit_results)}.'
+            return Response({'message': msg})
         except Exception as e:
             return Response({'error': str(e)}, status=400)
 
