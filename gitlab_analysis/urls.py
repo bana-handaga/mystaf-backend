@@ -5,7 +5,7 @@ from .views import (
     ActivityListView,
     ProjectListView, ProjectDetailView, SyncProjectsView, SyncProjectCommitsView
 )
-from .views import IssueCommentListView, IssueCommentStatsView, SyncIssueCommentsView, CommitMessageListView, CommitAnalysisView, ManagementReportView
+from .views import IssueCommentListView, IssueCommentStatsView, SyncIssueCommentsView, CommitMessageListView, CommitAnalysisView, ManagementReportView, GitLabDiagnosticView
 
 urlpatterns = [
     path('config/', GitLabConfigView.as_view(), name='gitlab-config'),
@@ -25,4 +25,5 @@ urlpatterns = [
     path('comments/stats/', IssueCommentStatsView.as_view(), name='comment-stats'),
     path('comments/sync/', SyncIssueCommentsView.as_view(), name='sync-comments'),
     path('reports/', ManagementReportView.as_view(), name='management-report'),
+    path('diagnostic/', GitLabDiagnosticView.as_view(), name='gitlab-diagnostic'),
 ]

@@ -189,7 +189,7 @@ class SyncProjectCommitsView(APIView):
                 count = service.sync_project_commits(proj, days)
                 results.append({'project': proj.name, 'new_commits': count, 'status': 'ok'})
             except Exception as e:
-                results.append({'project': proj.name, 'error': str(e), 'status': 'error'})
+                results.append({'project': proj.name, 'new_commits': 0, 'error': str(e), 'status': 'error'})
 
         return Response({'results': results})
 
@@ -396,6 +396,34 @@ class IssueCommentListView(APIView):
         } for c in qs[:500]]
 
         return Response({'count': len(results), 'results': results})
+
+
+class GitLabDiagnosticView(APIView):
+    """Test koneksi GitLab dan tampilkan info debug."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        config = GitLabConfig.objects.filter(is_active=True).first()
+        if not config:
+            return Response({'status': 'error', 'message': 'Konfigurasi GitLab belum diatur.'}, status=400)
+
+        try:
+            service = GitLabService()
+            current_user = service.gl.auth()
+            gl_user = service.gl.users.get(service.gl.auth())
+            server_version = service.gl.version()
+            project_count = GitLabProject.objects.count()
+            from .models import ProjectCommit
+            commit_count = ProjectCommit.objects.count()
+            return Response({
+                'status': 'ok',
+                'gitlab_url': config.url,
+                'gitlab_version': server_version,
+                'project_count_db': project_count,
+                'commit_count_db': commit_count,
+            })
+        except Exception as e:
+            return Response({'status': 'error', 'message': str(e)}, status=400)
 
 
 class ManagementReportView(APIView):

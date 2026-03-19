@@ -1,8 +1,11 @@
 import gitlab
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone as dt_timezone
 from django.utils import timezone
 from .models import GitLabConfig, GitLabActivity, ActivitySummary, GitLabProject
 from accounts.models import StafUser
+
+logger = logging.getLogger(__name__)
 
 class GitLabService:
     def __init__(self):
@@ -19,7 +22,7 @@ class GitLabService:
         except (IndexError, Exception) as e:
             raise ValueError(f"User GitLab '{gitlab_username}' tidak ditemukan: {e}")
 
-        since = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        since = (datetime.now(dt_timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
         events = user.events.list(after=since, all=True)
         return user, events
 
@@ -36,31 +39,42 @@ class GitLabService:
             if not activity_type:
                 continue
 
-            activity_date = datetime.fromisoformat(
-                event.created_at.replace('Z', '+00:00')
-            )
+            project_id = getattr(event, 'project_id', None)
+            if not project_id:
+                continue
 
-            project_name = getattr(event, 'project_id', 'Unknown')
             try:
-                project = self.gl.projects.get(event.project_id)
+                activity_date = datetime.fromisoformat(
+                    event.created_at.replace('Z', '+00:00')
+                )
+            except Exception:
+                continue
+
+            project_name = str(project_id)
+            try:
+                project = self.gl.projects.get(project_id)
                 project_name = project.name_with_namespace
             except Exception:
                 pass
 
-            _, created = GitLabActivity.objects.get_or_create(
-                staf=staf,
-                activity_type=activity_type,
-                project_id=event.project_id,
-                activity_date=activity_date,
-                defaults={
-                    'project_name': project_name,
-                    'description': getattr(event, 'note', {}).get('body', '') if hasattr(event, 'note') else '',
-                    'commits_count': event.push_data.get('commit_count', 0) if hasattr(event, 'push_data') and event.push_data else 0,
-                    'raw_data': event.asdict() if hasattr(event, 'asdict') else {},
-                }
-            )
-            if created:
-                created_count += 1
+            try:
+                _, created = GitLabActivity.objects.get_or_create(
+                    staf=staf,
+                    activity_type=activity_type,
+                    project_id=project_id,
+                    activity_date=activity_date,
+                    defaults={
+                        'project_name': project_name,
+                        'description': getattr(event, 'note', {}).get('body', '') if hasattr(event, 'note') else '',
+                        'commits_count': event.push_data.get('commit_count', 0) if hasattr(event, 'push_data') and event.push_data else 0,
+                        'raw_data': {},
+                    }
+                )
+                if created:
+                    created_count += 1
+            except Exception as e:
+                logger.warning(f"get_or_create activity failed for {staf.username}: {e}")
+                continue
 
         return created_count
 
@@ -146,27 +160,34 @@ class GitLabService:
         try:
             gl_project = self.gl.projects.get(project_obj.project_id)
         except Exception as e:
-            raise ValueError(f"Project tidak ditemukan: {e}")
+            raise ValueError(f"Project tidak ditemukan di GitLab: {e}")
 
-        since = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        since = (datetime.now(dt_timezone.utc) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%SZ')
         try:
-            commits = gl_project.commits.list(since=since, all=True)
-        except Exception:
-            return 0
+            commits = gl_project.commits.list(since=since, all=True, with_stats=False)
+        except Exception as e:
+            raise ValueError(f"Gagal mengambil commits dari GitLab: {e}")
 
-        # Build username->staf map
+        # Build lookup maps: by gitlab_username and by email
         from accounts.models import StafUser
-        staf_map = {s.gitlab_username: s for s in StafUser.objects.filter(gitlab_username__isnull=False)}
+        all_staf = StafUser.objects.all()
+        staf_by_username = {s.gitlab_username: s for s in all_staf if s.gitlab_username}
+        staf_by_email = {s.email.lower(): s for s in all_staf if s.email}
 
         created = 0
         for c in commits:
-            author_email = getattr(c, 'author_email', '') or ''
-            gitlab_username = getattr(c, 'committer_email', author_email).split('@')[0]
+            author_email = (getattr(c, 'author_email', '') or '').lower()
 
-            # Try to match staf
-            staf = staf_map.get(gitlab_username)
+            # Match staf: first by email, then by gitlab_username derived from email prefix
+            staf = staf_by_email.get(author_email)
+            if not staf:
+                email_prefix = author_email.split('@')[0]
+                staf = staf_by_username.get(email_prefix)
 
             committed_at = datetime.fromisoformat(c.committed_date.replace('Z', '+00:00'))
+
+            # Use real gitlab_username from staf if matched, otherwise email prefix
+            gitlab_username = staf.gitlab_username if staf else (author_email.split('@')[0] or getattr(c, 'author_name', ''))
 
             _, is_new = ProjectCommit.objects.get_or_create(
                 project=project_obj,
