@@ -11,19 +11,36 @@ from .serializers import (
 from .services import GitLabService
 
 class GitLabConfigView(APIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         config = GitLabConfig.objects.filter(is_active=True).first()
         if not config:
             return Response({'detail': 'Belum ada konfigurasi GitLab.'}, status=404)
-        return Response(GitLabConfigSerializer(config).data)
+        data = GitLabConfigSerializer(config).data
+        token = config.private_token or ''
+        data['token_masked'] = ('*' * max(0, len(token) - 4)) + token[-4:] if token else ''
+        data['updated_at'] = config.updated_at
+        return Response(data)
 
     def post(self, request):
         serializer = GitLabConfigWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         config = serializer.save()
         return Response(GitLabConfigSerializer(config).data, status=201)
+
+    def patch(self, request):
+        config = GitLabConfig.objects.filter(is_active=True).first()
+        if not config:
+            return Response({'detail': 'Belum ada konfigurasi GitLab.'}, status=404)
+        serializer = GitLabConfigWriteSerializer(config, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        config = serializer.save()
+        data = GitLabConfigSerializer(config).data
+        token = config.private_token or ''
+        data['token_masked'] = ('*' * max(0, len(token) - 4)) + token[-4:] if token else ''
+        data['updated_at'] = config.updated_at
+        return Response(data)
 
 class SyncStafActivityView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -36,7 +53,11 @@ class SyncStafActivityView(APIView):
         else:
             staf_list = StafUser.objects.filter(role='programmer', is_active=True)
 
-        service = GitLabService()
+        try:
+            service = GitLabService()
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
+
         results = []
         for staf in staf_list:
             try:
@@ -197,7 +218,10 @@ class SyncProjectCommitsView(APIView):
 
     def post(self, request, project_id=None):
         days = int(request.data.get('days', 30))
-        service = GitLabService()
+        try:
+            service = GitLabService()
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
         results = []
 
         if project_id:
@@ -479,7 +503,10 @@ class SyncIssueCommentsView(APIView):
     def post(self, request):
         days = int(request.data.get('days', 30))
         project_id = request.data.get('project_id')
-        service = GitLabService()
+        try:
+            service = GitLabService()
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)
 
         if project_id:
             projects = GitLabProject.objects.filter(id=project_id)
